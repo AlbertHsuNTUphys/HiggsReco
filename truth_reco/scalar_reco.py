@@ -290,7 +290,7 @@ def load_data(input_path, outdir, output_format, num_events, preprocess_data):
         test_entries = num_events
 
         # Basic selection
-        selection_string = "(nElectron == 1) & (nMuon == 1) & (nJet > 3)"
+        selection_string = "(nElectron == 1) & (nMuon == 1) & (n_tight_jet > 3)"
 
         # Create GenPart collections
         # Speed up code by removing any non-essential variables from here
@@ -331,6 +331,11 @@ def load_data(input_path, outdir, output_format, num_events, preprocess_data):
         RecoJet_mass = events.arrays(['Jet_mass'], selection_string, entry_stop=test_entries)['Jet_mass']
         RecoJet_p4 = vector.zip({'pt':RecoJet_pt, 'eta':RecoJet_eta, 'phi':RecoJet_phi, 'mass':RecoJet_mass})
         RecoJet_genjetidx = events.arrays(['Jet_genJetIdx'], selection_string, entry_stop=test_entries)['Jet_genJetIdx']
+        RecoJet_CvB    = events.arrays(['Jet_btagDeepFlavCvB'], entry_stop=run_event)['Jet_btagDeepFlavCvB']
+        RecoJet_CvL    = events.arrays(['Jet_btagDeepFlavCvL'], entry_stop=run_event)['Jet_btagDeepFlavCvL']
+        RecoJet_FlavB  = events.arrays(['Jet_btagDeepFlavB'],   entry_stop=run_event)['Jet_btagDeepFlavB']
+        TightJet_id    = events.arrays(['tightJets_id_in24'], entry_stop=run_event)['tightJets_id_in24']
+        nTightJet      = events.arrays(['n_tight_jet'],       entry_stop=run_event)['n_tight_jet']
 
         # Create reco electron 4-vectors
         nElectrons = events.arrays(['nElectron'], selection_string, entry_stop=test_entries)['nElectron']
@@ -398,8 +403,13 @@ def load_data(input_path, outdir, output_format, num_events, preprocess_data):
             # The following function must come after the parton level information is checked
             ev_truth.dr_parton_particle()
 
+            recoj1_idx = -1
+            recoj2_idx = -1
             recoJet_p4_dict = {}
+
             for j_idx in range(0,len(RecoJet_p4[row])):
+                if not (j_idx in TightJet_id[row]):
+                  continue
                 # Create reco jet dict
                 recoJet_p4_dict['RecoJet{0}'.format(j_idx)] = RecoJet_p4[row,j_idx]
 
@@ -412,6 +422,8 @@ def load_data(input_path, outdir, output_format, num_events, preprocess_data):
                     scalar_recoj2_p4 = RecoJet_p4[row,j_idx]
                     recoj2_idx = j_idx
 
+            if recoj1_idx == -1 or recoj2_idx == -1:
+              continue # b,c jet may not fall to tight jet.
             candidate_reco_jet_indices.append([recoj1_idx,recoj2_idx])
 
             # Check how often candidate jets fall into leading X jet bin
@@ -457,7 +469,10 @@ def load_data(input_path, outdir, output_format, num_events, preprocess_data):
 
             # Now we start creating output dataset
             # Create dict of various combinations of all n reco jets in event = n(n+1)/2
-            combinations_list = list(combinations(recoJet_p4_dict.items(), 2 ))
+#            combinations_list = list(combinations(recoJet_p4_dict.items(), 2 ))
+
+            tight_jet_id_skim = TightJet_id[row][:min(nTightJet[row],6)]
+            combinations_list = list(permutations(tight_jet_id_skim, 2 ))
 
             # Sort list of reco leptons according to pt for input into dataframe
             reco_leptons_p4_list.sort(key=lambda x: x.pt, reverse=True)
@@ -468,10 +483,18 @@ def load_data(input_path, outdir, output_format, num_events, preprocess_data):
             bmatched_jet_eta = []
             bmatched_jet_phi = []
             bmatched_jet_mass = []
+            bmatched_jet_CvB = []
+            bmatched_jet_CvL = []
+            bmatched_jet_FlavB = []
+            bmatched_jet_index = [] # aux info, not used for training etc. But good to do pT ordering etc.
             lmatched_jet_pt = []
             lmatched_jet_eta = []
             lmatched_jet_phi = []
             lmatched_jet_mass = []
+            lmatched_jet_CvB = []
+            lmatched_jet_CvL = []
+            lmatched_jet_FlavB = []
+            lmatched_jet_index = []
             dR_bmatched_lmatched_jets = []
             dR_bmatched_jet_lep1 = []
             dR_bmatched_jet_lep2 = []
@@ -482,10 +505,18 @@ def load_data(input_path, outdir, output_format, num_events, preprocess_data):
             jet3_eta = []
             jet3_phi = []
             jet3_mass = []
+            jet3_CvL = []
+            jet3_CvB = []
+            jet3_FlavB = []
+            jet3_index = []
             jet4_pt = []
             jet4_eta = []
             jet4_phi = []
             jet4_mass = []
+            jet4_CvL = []
+            jet4_CvB = []
+            jet4_FlavB = []
+            jet4_index = []
             leading_lept_pt = []
             leading_lept_eta = []
             leading_lept_phi = []
@@ -494,108 +525,134 @@ def load_data(input_path, outdir, output_format, num_events, preprocess_data):
             subleading_lept_eta = []
             subleading_lept_phi = []
             subleading_lept_mass = []
-            labels = []
+            labels = [] # Signal consider b, c ordering
+            labels_pair = [] # Signal not consider b, c ordering
 
             for comb_ in combinations_list:
-                # Combinations of form comb_[which jet][key @dimension='0' or 4-vector @dimension='1']
-                n_candidates = 0
-                # Check if the index of the jets @ positions 0 or 1 are the same as either candidate reco index
-                # [7:] strips 'RecoJet' from key
-                if int(comb_[0][0][7:]) in [recoj1_idx,recoj2_idx]:
-                    n_candidates+=1
-                if int(comb_[1][0][7:]) in [recoj1_idx,recoj2_idx]:
-                    n_candidates+=1
-                # Signal = any combination where jets in position 1 and 2 had the same index as the candidate reco jets
-                if n_candidates == 2:
-                    label = 1
-                else:
-                    label = 0
+              # Need to add Flav info. -> Use idx combination instead of particle obj combination. -> Code change a lot.
+              bmatched_jet_pt.append(RecoJet_pt[row][comb_[0]])
+              bmatched_jet_eta.append(RecoJet_eta[row][comb_[0]])
+              bmatched_jet_phi.append(RecoJet_phi[row][comb_[0]])
+              bmatched_jet_mass.append(RecoJet_mass[row][comb_[0]])
+              bmatched_jet_CvB.append(RecoJet_CvB[row][comb_[0]])
+              bmatched_jet_CvL.append(RecoJet_CvL[row][comb_[0]])
+              bmatched_jet_FlavB.append(RecoJet_FlavB[row][comb_[0]])
+              bmatched_jet_index.append(comb_[0])
+              lmatched_jet_pt.append(RecoJet_pt[row][comb_[1]])
+              lmatched_jet_eta.append(RecoJet_eta[row][comb_[1]])
+              lmatched_jet_phi.append(RecoJet_phi[row][comb_[1]])
+              lmatched_jet_mass.append(RecoJet_mass[row][comb_[1]])
+              lmatched_jet_CvB.append(RecoJet_CvB[row][comb_[1]])
+              lmatched_jet_CvL.append(RecoJet_CvL[row][comb_[1]])
+              lmatched_jet_FlavB.append(RecoJet_FlavB[row][comb_[1]])
+              lmatched_jet_index.append(comb_[1])
+              dR_bmatched_lmatched_jets.append(RecoJet_p4[row][comb_[0]].deltaR(RecoJet_p4[row][comb_[1]]))
+              dR_bmatched_jet_lep1.append(RecoJet_p4[row][comb_[0]].deltaR(reco_leptons_p4_list[0]))
+              dR_bmatched_jet_lep2.append(RecoJet_p4[row][comb_[0]].deltaR(reco_leptons_p4_list[1]))
+              dR_lmatched_jet_lep1.append(RecoJet_p4[row][comb_[1]].deltaR(reco_leptons_p4_list[0]))
+              dR_lmatched_jet_lep2.append(RecoJet_p4[row][comb_[1]].deltaR(reco_leptons_p4_list[1]))
+              j1_p4 = vector.obj(pt=RecoJet_pt[row][comb_[0]], eta=RecoJet_eta[row][comb_[0]], phi=RecoJet_phi[row][comb_[0]], mass=RecoJet_mass[row][comb_[0]])
+              j2_p4 = vector.obj(pt=RecoJet_pt[row][comb_[1]], eta=RecoJet_eta[row][comb_[1]], phi=RecoJet_phi[row][comb_[1]], mass=RecoJet_mass[row][comb_[1]])
+              invmass_bjlj.append(compute_di_mass(j1_p4, j2_p4))
+      
+              jet3_index_ = -1
+              jet4_index_ = -1
+              for idx in tight_jet_id_skim:
+                if idx not in [comb_[0], comb_[1]] and jet3_index_ == -1:
+                  jet3_index_ = idx
+                  jet3_pt.append(RecoJet_p4[row][idx].pt)
+                  jet3_eta.append(RecoJet_p4[row][idx].eta)
+                  jet3_phi.append(RecoJet_p4[row][idx].phi)
+                  jet3_mass.append(RecoJet_p4[row][idx].mass)
+                  jet3_CvB.append(RecoJet_CvB[row][idx])
+                  jet3_CvL.append(RecoJet_CvL[row][idx])
+                  jet3_FlavB.append(RecoJet_FlavB[row][idx])
+                elif idx not in [comb_[0], comb_[1], jet3_index_]:
+                  jet4_index_ = idx
+                  jet4_pt.append(RecoJet_p4[row][idx].pt)
+                  jet4_eta.append(RecoJet_p4[row][idx].eta)
+                  jet4_phi.append(RecoJet_p4[row][idx].phi)
+                  jet4_mass.append(RecoJet_p4[row][idx].mass)
+                  jet4_CvB.append(RecoJet_CvB[row][idx])
+                  jet4_CvL.append(RecoJet_CvL[row][idx])
+                  jet4_FlavB.append(RecoJet_FlavB[row][idx])
+                  break
+              jet3_index.append(jet3_index_)
+              jet4_index.append(jet4_index_)
 
-                bmatched_jet_pt.append(comb_[0][1].pt)
-                bmatched_jet_eta.append(comb_[0][1].eta)
-                bmatched_jet_phi.append(comb_[0][1].phi)
-                bmatched_jet_mass.append(comb_[0][1].mass)
+              leading_lept_pt.append(reco_leptons_p4_list[0].pt)
+              leading_lept_eta.append(reco_leptons_p4_list[0].eta)
+              leading_lept_phi.append(reco_leptons_p4_list[0].phi)
+              leading_lept_mass.append(reco_leptons_p4_list[0].mass)
+              subleading_lept_pt.append(reco_leptons_p4_list[1].pt)
+              subleading_lept_eta.append(reco_leptons_p4_list[1].eta)
+              subleading_lept_phi.append(reco_leptons_p4_list[1].phi)
+              subleading_lept_mass.append(reco_leptons_p4_list[1].mass)
 
-                lmatched_jet_pt.append(comb_[1][1].pt)
-                lmatched_jet_eta.append(comb_[1][1].eta)
-                lmatched_jet_phi.append(comb_[1][1].phi)
-                lmatched_jet_mass.append(comb_[1][1].mass)
+              if (comb_[0] == recoj1_idx) and (comb_[1] == recoj2_idx):
+                label = 1
+              else:
+                label = 0
+              labels.append(label)
+              if ((comb_[0] == recoj1_idx) and (comb_[1] == recoj2_idx)) or ((comb_[0]==recoj2_idx) and (comb_[1] == recoj1_idx)):
+                label_pair = 1
+              else:
+                label_pair = 0
+              labels_pair.append(label_pair)
 
-                dR_bmatched_lmatched_jets.append( comb_[0][1].deltaR(comb_[1][1]) )
-
-                leading_lept_pt.append(reco_leptons_p4_list[0].pt)
-                leading_lept_eta.append(reco_leptons_p4_list[0].eta)
-                leading_lept_phi.append(reco_leptons_p4_list[0].phi)
-                leading_lept_mass.append(reco_leptons_p4_list[0].mass)
-
-                subleading_lept_pt.append(reco_leptons_p4_list[1].pt)
-                subleading_lept_eta.append(reco_leptons_p4_list[1].eta)
-                subleading_lept_phi.append(reco_leptons_p4_list[1].phi)
-                subleading_lept_mass.append(reco_leptons_p4_list[1].mass)
-
-                dR_bmatched_jet_lep1.append( comb_[0][1].deltaR(reco_leptons_p4_list[0]) )
-                dR_bmatched_jet_lep2.append( comb_[0][1].deltaR(reco_leptons_p4_list[1]) )
-                dR_lmatched_jet_lep1.append( comb_[1][1].deltaR(reco_leptons_p4_list[0]) )
-                dR_lmatched_jet_lep2.append( comb_[1][1].deltaR(reco_leptons_p4_list[1]) )
-
-                tempj0_ = vector.obj(pt=comb_[0][1].pt, eta=comb_[0][1].eta, phi=comb_[0][1].phi, mass=comb_[0][1].mass)
-                tempj1_ = vector.obj(pt=comb_[1][1].pt, eta=comb_[1][1].eta, phi=comb_[1][1].phi, mass=comb_[1][1].mass)
-                j1j2_combined_mass = compute_di_mass(tempj0_,tempj1_)
-                invmass_bjlj.append( j1j2_combined_mass )
-
-                jet3_index = -1
-                for key, val in recoJet_p4_dict.items():
-                    if int(key[-1]) not in [int(comb_[0][0][-1]),int(comb_[1][0][-1])] and jet3_index == -1:
-                        jet3_index = int(key[-1])
-                        jet3_pt.append(val.pt)
-                        jet3_eta.append(val.eta)
-                        jet3_phi.append(val.phi)
-                        jet3_mass.append(val.mass)
-                    elif int(key[-1]) not in [int(comb_[0][0][-1]),int(comb_[1][0][-1]),jet3_index]:
-                        jet4_index = int(key[-1])
-                        jet4_pt.append(val.pt)
-                        jet4_eta.append(val.eta)
-                        jet4_phi.append(val.phi)
-                        jet4_mass.append(val.mass)
-                        break
-
-                labels.append(label)
-
+              Entry.append(row)
             # Dictionary style entries for combination (easy to convert to pandas dataframe)
-            d_entries = {
-            'Entry': row,
-            'bmatched_jet_pt': bmatched_jet_pt,
-            'bmatched_jet_eta': bmatched_jet_eta,
-            'bmatched_jet_phi': bmatched_jet_phi,
-            'bmatched_jet_mass': bmatched_jet_mass,
-            'lmatched_jet_pt': lmatched_jet_pt,
-            'lmatched_jet_eta': lmatched_jet_eta,
-            'lmatched_jet_phi': lmatched_jet_phi,
-            'lmatched_jet_mass': lmatched_jet_mass,
-            'dR_bmatched_lmatched_jets': dR_bmatched_lmatched_jets,
-            'dR_bmatched_jet_lep1': dR_bmatched_jet_lep1,
-            'dR_bmatched_jet_lep2': dR_bmatched_jet_lep2,
-            'dR_lmatched_jet_lep1': dR_lmatched_jet_lep1,
-            'dR_lmatched_jet_lep2': dR_lmatched_jet_lep2,
-            'invmass_bjlj': invmass_bjlj,
-            'lep1_pt': leading_lept_pt,
-            'lep1_eta': leading_lept_eta,
-            'lep1_phi': leading_lept_phi,
-            'lep1_mass': leading_lept_mass,
-            'lep2_pt': subleading_lept_pt,
-            'lep2_eta': subleading_lept_eta,
-            'lep2_phi': subleading_lept_phi,
-            'lep2_mass': subleading_lept_mass,
-            'jet3_pt': jet3_pt,
-            'jet3_eta': jet3_eta,
-            'jet3_phi': jet3_phi,
-            'jet3_mass': jet3_mass,
-            'jet4_pt': jet4_pt,
-            'jet4_eta': jet4_eta,
-            'jet4_phi': jet4_phi,
-            'jet4_mass': jet4_mass,
-            'label': labels
-            }
+          d_entries = {
+             'Entry': Entry,
+             'bmatched_jet_index': bmatched_jet_index,
+             'lmatched_jet_index': lmatched_jet_index,
+             'jet3_index': jet3_index,
+             'jet4_index': jet4_index,
+             'bmatched_jet_pt': bmatched_jet_pt,
+             'bmatched_jet_eta': bmatched_jet_eta,
+             'bmatched_jet_phi': bmatched_jet_phi,
+             'bmatched_jet_mass': bmatched_jet_mass,
+             'bmatched_jet_CvB': bmatched_jet_CvB,
+             'bmatched_jet_CvL': bmatched_jet_CvL,
+             'bmatched_jet_FlavB': bmatched_jet_FlavB,
+             'lmatched_jet_pt': lmatched_jet_pt,
+             'lmatched_jet_eta': lmatched_jet_eta,
+             'lmatched_jet_phi': lmatched_jet_phi,
+             'lmatched_jet_mass': lmatched_jet_mass,
+             'lmatched_jet_CvB': lmatched_jet_CvB,
+             'lmatched_jet_CvL': lmatched_jet_CvL,
+             'lmatched_jet_FlavB': lmatched_jet_FlavB,
+             'dR_bmatched_lmatched_jets': dR_bmatched_lmatched_jets,
+             'dR_bmatched_jet_lep1': dR_bmatched_jet_lep1,
+             'dR_bmatched_jet_lep2': dR_bmatched_jet_lep2,
+             'dR_lmatched_jet_lep1': dR_lmatched_jet_lep1,
+             'dR_lmatched_jet_lep2': dR_lmatched_jet_lep2,
+             'invmass_bjlj': invmass_bjlj,
+             'lep1_pt': leading_lept_pt,
+             'lep1_eta': leading_lept_eta,
+             'lep1_phi': leading_lept_phi,
+             'lep1_mass': leading_lept_mass,
+             'lep2_pt': subleading_lept_pt,
+             'lep2_eta': subleading_lept_eta,
+             'lep2_phi': subleading_lept_phi,
+             'lep2_mass': subleading_lept_mass,
+             'jet3_pt': jet3_pt,
+             'jet3_eta': jet3_eta,
+             'jet3_phi': jet3_phi,
+             'jet3_mass': jet3_mass,
+             'jet3_CvB': jet3_CvB,
+             'jet3_CvL': jet3_CvL,
+             'jet3_FlavB': jet3_FlavB,
+             'jet4_pt': jet4_pt,
+             'jet4_eta': jet4_eta,
+             'jet4_phi': jet4_phi,
+             'jet4_mass': jet4_mass,
+             'jet4_CvB': jet4_CvB,
+             'jet4_CvL': jet4_CvL,
+             'jet4_FlavB': jet4_FlavB,
+             'label':labels,
+             'label_pair':labels_pair
+          }
             df_ = pd.DataFrame(data=d_entries)
             training_df.append(df_)
 

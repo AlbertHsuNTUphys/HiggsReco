@@ -15,13 +15,13 @@ from torchviz import make_dot
 # Simple customised dataset class inhertis from Dataset class which is accepted by torch models
 # Takes dataframe and returns tensors of input and labels
 class custom_train_dataset(Dataset):
-    def __init__(self, df, input_columns, target_column, transform=None, target_transform=None):
+    def __init__(self, df, input_columns, target_column, transform=None, target_transform=None, device='cpu'):
         self.df = df
         # make tensors for values of inputs and relveant labels
         source_combs = self.df[input_columns].values
         target_labels = self.df[target_column].values
-        self.x_train = torch.tensor(source_combs,dtype=torch.float32)
-        self.y_train = torch.tensor(target_labels,dtype=torch.float32)
+        self.x_train = torch.tensor(source_combs,dtype=torch.float32, device=torch.device(device))
+        self.y_train = torch.tensor(target_labels,dtype=torch.float32, device=torch.device(device))
         self.transform = transform
 
     def __len__(self):
@@ -166,20 +166,19 @@ def main():
     infile_name_ = '../truth_reco/dataframes/test_frames/100k_result_drvar.parquet.gzip'
     indf = pd.read_parquet(infile_name_)
     input_columns_ = [
-    'bmatched_jet_pt','bmatched_jet_eta','bmatched_jet_phi','bmatched_jet_mass',
-    'lmatched_jet_pt','lmatched_jet_eta','lmatched_jet_phi','lmatched_jet_mass',
-    'dR_bmatched_lmatched_jets','dR_bmatched_jet_lep1','dR_bmatched_jet_lep2','dR_lmatched_jet_lep1','dR_lmatched_jet_lep2',
-    'invmass_bjlj',
-    'lep1_pt','lep1_eta','lep1_phi','lep1_mass',
-    'lep2_pt','lep2_eta','lep2_phi','lep2_mass',
-    'jet3_pt','jet3_eta','jet3_phi','jet3_mass',
-    'jet4_pt','jet4_eta','jet4_phi','jet4_mass'
+     'bmatched_jet_pt','bmatched_jet_eta','bmatched_jet_phi','bmatched_jet_mass', 'bmatched_jet_CvB', 'bmatched_jet_CvL', 'bmatched_jet_FlavB',
+     'lmatched_jet_pt','lmatched_jet_eta','lmatched_jet_phi','lmatched_jet_mass', 'lmatched_jet_CvB', 'lmatched_jet_CvL', 'lmatched_jet_FlavB',
+     'dR_bmatched_lmatched_jets','dR_bmatched_jet_lep1','dR_bmatched_jet_lep2','dR_lmatched_jet_lep1','dR_lmatched_jet_lep2',
+     'invmass_bjlj',
+     'lep1_pt','lep1_eta','lep1_phi','lep1_mass',
+     'lep2_pt','lep2_eta','lep2_phi','lep2_mass',
+     'jet3_pt','jet3_eta','jet3_phi','jet3_mass', 'jet3_CvB', 'jet3_CvL', 'jet3_FlavB',
+     'jet4_pt','jet4_eta','jet4_phi','jet4_mass', 'jet4_CvB', 'jet4_CvL', 'jet4_FlavB'    
     ]
-
     # Hyperparameters
     learning_rate = 0.00001
     batchsize = 500
-    n_epochs = 100
+    n_epochs = 300
 
     # Choose device to run on
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -211,8 +210,8 @@ def main():
     print('sig/bkg class ratio: ', class_ratio)
 
     # Define loss function
-    #loss_function = nn.BCEWithLogitsLoss(pos_weight=torch.tensor(class_ratio))
-    loss_function = nn.BCEWithLogitsLoss()
+    loss_function = nn.BCEWithLogitsLoss(pos_weight=torch.tensor(class_ratio))
+    #loss_function = nn.BCEWithLogitsLoss()
 
     if newtraining == 1:
         # Generate model and move to device
